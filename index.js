@@ -1,9 +1,32 @@
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const mqtt = require('mqtt');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// MQTT Client Setup
+const mqttOptions = {
+  username: process.env.USER,
+  password: process.env.PASSWORD
+};
+
+let mqttClient;
+try {
+  mqttClient = mqtt.connect(process.env.BROKER_URL, mqttOptions);
+  
+  mqttClient.on('connect', () => {
+    console.log('Connected to MQTT broker successfully');
+  });
+  
+  mqttClient.on('error', (error) => {
+    console.error('MQTT connection error:', error);
+  });
+} catch (error) {
+  console.error('Failed to connect to MQTT broker:', error);
+}
 
 // Middleware
 app.use(cors());
@@ -21,6 +44,20 @@ app.post('/api/vital-signs', (req, res) => {
     console.log('Data:');
     console.log(JSON.stringify(vitalSignsData, null, 2));
     console.log('=====================================\n');
+    
+    // Publish to MQTT if client is connected
+    if (mqttClient && mqttClient.connected) {
+      const topic = 'livecare/vital-signs';
+      mqttClient.publish(topic, JSON.stringify(vitalSignsData), { qos: 1 }, (err) => {
+        if (err) {
+          console.error('Error publishing to MQTT:', err);
+        } else {
+          console.log(`Published data to ${topic}`);
+        }
+      });
+    } else {
+      console.warn('MQTT client not connected. Data not published.');
+    }
     
     // Here you would typically save the data to a database
     // For now, we'll just acknowledge receipt
@@ -44,6 +81,15 @@ app.post('/api/vital-signs', (req, res) => {
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Server is running' });
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  if (mqttClient) {
+    console.log('Closing MQTT connection...');
+    mqttClient.end();
+  }
+  process.exit();
 });
 
 // Start server
